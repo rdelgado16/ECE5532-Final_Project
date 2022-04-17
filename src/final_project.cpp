@@ -15,10 +15,16 @@ tf::Vector3 ref_relative_position;
 nav_msgs::Path gps_path;
 ros::Publisher path_pub;
 ros::Publisher markers_pub;
-ros::Publisher throttle_pub;
-ros::Publisher brake_pub;
-ros::Publisher steering_pub;
+// ros::Publisher throttle_pub;
+// ros::Publisher brake_pub;
+// ros::Publisher steering_pub;
+ros::Publisher controller_pub;
+geometry_msgs::Twist audibot_params; // Twist message for the audibot parameters
 UTMCoords UTM_local_intersections[18];
+
+
+std::vector<int> int_actions;  // Legend: -1 = Stop, 0 = Straight, 1 = Left, 2 = Right
+int int_count = 0;
 
 // Starting coordinates of the audiobot
 double ref_lat;
@@ -33,11 +39,21 @@ double waypoint_theta; // Angle between waypoint and vehicle
 double dist; // Direct distance between vehicle and waypoint
 double central_meridian; // Central meridian of the robots reference position
 
+double heading_ROS;
+double desired_heading; // Heading of the vehicle but in ROS format (due East)
+bool int_flag = false;
+
+double heading_error;
+
 // List of UTM converted waypoint coordinates
 UTMCoords waypoint_UTM[8];
 
+void initGraph(){
+  int_actions.resize(4);
+  int_actions = {0, 1, 0, -1};
+}
+
 void initIntersections(){
-  
   // List of GPS waypoint coordinates
   const double intersections[18][2] = {
     {42.0024367640, -83.0026815700},
@@ -77,6 +93,8 @@ void recvFix(const sensor_msgs::NavSatFixConstPtr& msg){
   double veh_lon = msg->longitude;
   double veh_x = current_coords.getX();
   double veh_y = current_coords.getY();
+  int traveled_int = 1; // If the intersection has already been traversed, don't count it again
+  
   tf::Vector3 waypoint_veh_pos;
 
   // Calculate convergence angle for ENU heading calc and convert to rads
@@ -84,60 +102,106 @@ void recvFix(const sensor_msgs::NavSatFixConstPtr& msg){
 
   for(int i = 0; i < 18; i++){
 
-    double waypoint_x = UTM_local_intersections[i].getX();
-    double waypoint_y = UTM_local_intersections[i].getY();
-    // Calculate heading offset between vehicle and waypoint
-    waypoint_theta = atan2((waypoint_y - veh_y), (waypoint_x - veh_x)) - conv_angle; // Subtract convergence angle
-    if(waypoint_theta <= 0){
-      waypoint_theta += 2*M_PI; // Keeps the waypoint angle between 0 and 2pi
-    }
+    // double waypoint_x = UTM_local_intersections[i].getX();
+    // double waypoint_y = UTM_local_intersections[i].getY();
+    // // Calculate heading offset between vehicle and waypoint
+    // waypoint_theta = atan2((waypoint_y - veh_y), (waypoint_x - veh_x)) - conv_angle; // Subtract convergence angle
+    // if(waypoint_theta <= 0){
+    //   waypoint_theta += 2*M_PI; // Keeps the waypoint angle between 0 and 2pi
+    // }
 
     // Vector between vehicle and waypoints
     waypoint_veh_pos = current_coords - UTM_local_intersections[i];
 
     // Finding direct distance between vehicle and waypoint
     dist = sqrt(pow(waypoint_veh_pos.getX(),2) + pow(waypoint_veh_pos.getY(),2));
-    ROS_INFO("Distance to intersection: (%d)", dist);
+    double time_to_int = dist/veh_spd;
+    int cnt = 0;
+    
+    if(dist<100){
+      ROS_INFO("Veh Pos (%f, %f)", veh_x, veh_y);
+      ROS_INFO("Distance to intersection %d: (%f)", i + 1, dist);    
+      ROS_INFO("Time to Intersection %f", time_to_int);
+    }
 
+    if (time_to_int <= 1 && int_flag == false && i != traveled_int){
 
-    // Relative position vs ref point for path
-    ref_relative_position = current_coords - ref_coords;
+      ROS_INFO("WE MADE IT INTO IF");
+      
+      int_flag = true;
+      traveled_int = i;
+      // if(int_actions[int_count] == 1){
+      //   desired_heading = heading_ROS + M_PI/2;
+      // }
+      // else if (int_actions[int_count] == 2){
+      //   desired_heading = heading_ROS + M_PI/2;
+      // }
+      
+      
+      // if(heading_error >= .5 && int_actions[int_count] > 0 ){
+      if(int_actions[int_count] > 0 ){
+        if(int_actions[int_count] == 1){
+          while(cnt<500){
+            audibot_params.linear.x = 1;
+            audibot_params.angular.z = M_PI/2;
+            controller_pub.publish(audibot_params);
+            cnt++;
+          }
+        }
+        else if (int_actions[int_count] == 2){
+          while(cnt<300){
+            audibot_params.linear.x = 1;
+            audibot_params.angular.z = -M_PI/2;
+            controller_pub.publish(audibot_params);
+            cnt++;s
+          }
+        }
+      }
+      else if(int_actions[int_count] == -1 ){
+        while(cnt<500){
+          audibot_params.linear.x = 0;
+          audibot_params.angular.z = 0;
+          controller_pub.publish(audibot_params);
+          cnt++;
+        }
+      }
+
+      if(int_count < int_actions.size()){
+        ROS_INFO("Count: {%d}", int_count);
+        int_count += 1;
+      } 
+    }
   }
 }
 
-// void recvHeading(const std_msgs::Float64ConstPtr& msg){
-//   std_msgs::Float64 robot_heading; // Audibot's current heading
-//   robot_heading.data = msg->data; // Heading is reported from robot in degrees relative due North
-//   double heading_rad = 2*M_PI - (robot_heading.data * (M_PI/180)); // Convert to Radians and make counter-clockwise;
-//   double heading_ROS; // Heading of the vehicle but in ROS format (due East)
-//   double heading_error;
-//   double time_to_waypoint;
-//   std_msgs::Float64 steering_angle;
-//   std_msgs::Float64 throttle_pos;
-//   std_msgs::Float64 brake_force;
+void recvHeading(const std_msgs::Float64ConstPtr& msg){
+  std_msgs::Float64 robot_heading; // Audibot's current heading
+  robot_heading.data = msg->data; // Heading is reported from robot in degrees relative due North
+  double heading_rad = 2*M_PI - (robot_heading.data * (M_PI/180)); // Convert to Radians and make counter-clockwise;
+  // Convert from GPS heading to ROS heading
+  if ((3*M_PI/2) <= heading_rad && heading_rad <= 2*M_PI){
+    heading_ROS = abs(heading_rad - (3*M_PI/2)); // If GPS heading is between 3pi/2 and 2pi, subtract 3pi/2
+  }
+  else{
+    heading_ROS = heading_rad + (M_PI/2); // If GPS heading is anywhere else, just add pi/2
+  }
+  ROS_INFO("Current Heading %f", heading_ROS);
 
-//   // Convert from GPS heading to ROS heading
-//   if ((3*M_PI/2) <= heading_rad && heading_rad <= 2*M_PI){
-//     heading_ROS = abs(heading_rad - (3*M_PI/2)); // If GPS heading is between 3pi/2 and 2pi, subtract 3pi/2
-//   }
-//   else{
-//     heading_ROS = heading_rad + (M_PI/2); // If GPS heading is anywhere else, just add pi/2
-//   }
 
-//   // Calculate heading error
-//   heading_error = waypoint_theta - heading_ROS;
+  // Calculate heading error'
 
-//   // Find time to the waypoint, used when determining when to brake, based on speed and distance from waypoint
-//   time_to_waypoint = dist/veh_spd;
+  // heading_error = waypoint_theta - heading_ROS;
 
-//   // Addressing issues at discontinuities
-//   if(heading_error > M_PI){
-//     heading_error = -(2*M_PI - heading_error);
-//   }
-//   else if(heading_error < -M_PI){
-//     heading_error = 2*M_PI + heading_error;
-//   }
+  // Find time to the waypoint, used when determining when to brake, based on speed and distance from waypoint
 
+  // // Addressing issues at discontinuities
+  // if(heading_error > M_PI){
+  //   heading_error = -(2*M_PI - heading_error);
+  // }
+  // else if(heading_error < -M_PI){
+  //   heading_error = 2*M_PI + heading_error;
+  // }
+}
 //   // Setting thottle, brake, and steering parameters
 //   if(dist <= 1 && waypoint_index <= 8){
 //     waypoint_index += 1; // Move onto the next waypoint once one is reached until the final one
@@ -183,13 +247,14 @@ int main(int argc, char** argv){
   ros::init(argc,argv,"final_project");
   ros::NodeHandle nh;
   ros::Subscriber gps_sub = nh.subscribe("/audibot/gps/fix",1,recvFix); // Grab current gps position
-  // ros::Subscriber heading_sub = nh.subscribe("/audibot/gps/heading",1,recvHeading); // Grab current heading
+  ros::Subscriber heading_sub = nh.subscribe("/audibot/gps/heading",1,recvHeading); // Grab current heading
   ros::Subscriber veh_spd_yaw_sub = nh.subscribe("audibot/twist",1,recvVehState); // Grab vehicle status
 
   // Vehicle parameter publisher
   // throttle_pub = nh.advertise<std_msgs::Float64>("/audibot/throttle_cmd", 1); // Publishing throttle param
   // brake_pub = nh.advertise<std_msgs::Float64>("/audibot/brake_cmd", 1); // Publishing brake param
   // steering_pub = nh.advertise<std_msgs::Float64>("/audibot/steering_cmd", 1); // Publishing throttle param
+    controller_pub = nh.advertise<geometry_msgs::Twist>("/audibot/cmd_vel", 1); // Publishing audibot params
 
   // Getting reference lat and lon
   nh.getParam("/audibot/gps/ref_lat",ref_lat);
