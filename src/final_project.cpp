@@ -58,10 +58,10 @@ double heading_error;
 UTMCoords waypoint_UTM[8];
 
 void initGraph(){
-  int_actions.resize(4);
-  int_actions = {1, 1, 2, -1};
-  int_order.resize(4);
-  int_order = {7, 8 , 9, 10};
+  int_actions.resize(6);
+  int_actions = {1, 0, 1, 2, 0, -1};
+  int_order.resize(6);
+  int_order = {7, 8 , 14, 13, 15, 16};
 }
 
 void initIntersections(){
@@ -140,12 +140,12 @@ void recvFix(const sensor_msgs::NavSatFixConstPtr& msg){
     int_flag = true;
   }
 
-  // if(abs(veh_yaw) >= .75 && speed > 17){
-  //   throttle_pos.data = 0;
-  //   brake_force.data = 0;
-  //   steering_angle.data = 0;
-  //   // ROS_INFO("Saving car from oversteer");
-  // }
+  if(abs(veh_yaw) >= .5 && veh_spd > 2){
+    audibot_params.linear.x = audibot_params.linear.x;
+    audibot_params.angular.z = 0;
+    controller_pub.publish(audibot_params);
+   ROS_INFO("Saving car from oversteer");
+  }
 
   if (heading_count == 1){
     if(int_actions[int_count] == 1){
@@ -174,33 +174,52 @@ void recvFix(const sensor_msgs::NavSatFixConstPtr& msg){
       if(time_to_int < 3){
         heading_count++;
       }
-      if(dist > 7){
-        ROS_INFO("SLOWING DOWN FOR TURN OR STOP");
-        // set_speed = 10;
-        audibot_params.linear.x = 5;
-        audibot_params.angular.z = 0;
-        controller_pub.publish(audibot_params);
-      }
-      else{
-        if (abs(heading_error) < 0.5 && heading_error != 0){
-          ROS_INFO("WE MADE IT TO INTERSECTION");
-          int_flag = false;
-          heading_count = 0;
-          if(int_count<int_actions.size()){
-            int_count++;
-          }
+      if(int_actions[int_count] == 1){
+        if(dist > 7){
+          ROS_INFO("SLOWING DOWN FOR TURN OR STOP");
+          // set_speed = 10;
+          audibot_params.linear.x = 5;
+          audibot_params.angular.z = 0;
+          controller_pub.publish(audibot_params);
         }
         else{
-            if(int_actions[int_count] == 1){
-                audibot_params.linear.x = 3;
-                audibot_params.angular.z = 5 * heading_error;
-                controller_pub.publish(audibot_params);
+          if (abs(heading_error) < 0.5 && heading_error != 0){
+            ROS_INFO("WE MADE IT TO INTERSECTION");
+            int_flag = false;
+            heading_count = 0;
+            if(int_count<int_actions.size()){
+              int_count++;
             }
-              else if (int_actions[int_count] == 2){
-                audibot_params.linear.x = 3;
-                audibot_params.angular.z = 5 * heading_error;
-                controller_pub.publish(audibot_params);
+          }
+          else{
+                  audibot_params.linear.x = 3;
+                  audibot_params.angular.z = 5 * heading_error;
+                  controller_pub.publish(audibot_params);
+              }
+        }
+      }
+      else if (int_actions[int_count] == 2){
+        if(dist > 12){
+          ROS_INFO("SLOWING DOWN FOR TURN OR STOP");
+          // set_speed = 10;
+          audibot_params.linear.x = 5;
+          audibot_params.angular.z = 0;
+          controller_pub.publish(audibot_params);
+        }
+        else{
+          if (abs(heading_error) < 0.5 && heading_error != 0){
+            ROS_INFO("WE MADE IT TO INTERSECTION");
+            int_flag = false;
+            heading_count = 0;
+            if(int_count<int_actions.size()){
+              int_count++;
             }
+          }
+          else{
+                  audibot_params.linear.x = 3;
+                  audibot_params.angular.z = 5 * heading_error;
+                  controller_pub.publish(audibot_params);
+              }
         }
       }
     }
@@ -216,11 +235,16 @@ void recvFix(const sensor_msgs::NavSatFixConstPtr& msg){
       }
       // Stopping at intersection
       else if (int_actions[int_count] == -1){
-        if(dist<10){
+        if(dist<30){
           audibot_params.linear.x = 0;
           audibot_params.angular.z = 0;
-          controller_pub.publish(audibot_params);        }
+          controller_pub.publish(audibot_params);        
+        }
+        else if(dist<8){
+          ROS_INFO("WE FREAKING MADE IT!!!!");
+        }
       }
+      
   }else{
     ROS_INFO("NEXT INTERSECTION {%d}", int_order[int_count]);
     ROS_INFO("Setting heading count back to 0");
