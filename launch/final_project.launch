@@ -13,6 +13,7 @@
     <node pkg="audibot_twist_controller" type="audibot_twist_node" name="twist_control" output="screen" />
   </group>
 
+  <!-- <node pkg="final_project" type="final_project" name="project_main" output="screen"/> -->
   <node pkg="rviz" type="rviz" name="lane_keep_viz" args="-d $(find audibot_lane_detection)/rviz/lane_detection.rviz" />
 
 </launch>

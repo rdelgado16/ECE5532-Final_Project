@@ -7,6 +7,9 @@
 #include <geometry_msgs/Twist.h>
 #include <tf/tf.h>
 #include <math.h>
+#include <dynamic_reconfigure/DoubleParameter.h>
+#include <dynamic_reconfigure/Reconfigure.h>
+#include <dynamic_reconfigure/Config.h>
 
 UTMCoords ref_point;
 
@@ -21,7 +24,8 @@ ros::Publisher markers_pub;
 ros::Publisher controller_pub;
 geometry_msgs::Twist audibot_params; // Twist message for the audibot parameters
 UTMCoords UTM_local_intersections[18];
-
+// ros::NodeHandle gh;
+double set_speed = 20;
 
 
 
@@ -43,19 +47,21 @@ double dist; // Direct distance between vehicle and waypoint
 double central_meridian; // Central meridian of the robots reference position
 
 double heading_ROS;
-double desired_heading; // Heading of the vehicle but in ROS format (due East)
+double desired_heading = 0; // Heading of the vehicle but in ROS format (due East)
 bool int_flag = false;
+int heading_count = 0;
 
 double heading_error;
+
 
 // List of UTM converted waypoint coordinates
 UTMCoords waypoint_UTM[8];
 
 void initGraph(){
-  int_actions.resize(3);
-  int_actions = {1, 0, -1};
-  int_order.resize(3);
-  int_order = {7, 8 , 14};
+  int_actions.resize(4);
+  int_actions = {1, 1, 2, -1};
+  int_order.resize(4);
+  int_order = {7, 8 , 9, 10};
 }
 
 void initIntersections(){
@@ -121,126 +127,105 @@ void recvFix(const sensor_msgs::NavSatFixConstPtr& msg){
   // Finding direct distance between vehicle and waypoint
   dist = sqrt(pow(waypoint_veh_pos.getX(),2) + pow(waypoint_veh_pos.getY(),2));
   double time_to_int = dist/veh_spd;
-  
+  ROS_INFO("Vehicle speed: {%f}", veh_spd);
   // if(dist<100){
   // ROS_INFO("Veh Pos (%f, %f)", veh_x, veh_y);
-  // ROS_INFO("Distance to intersection %d: (%f)", int_order[int_count], dist);    
+  ROS_INFO("Distance to intersection %d: (%f)", int_order[int_count], dist);    
   ROS_INFO("Time to Intersection %f", time_to_int);
   ROS_INFO("FLAG: {%d}", int_flag);
+  ROS_INFO("Current Heading: %f, Heading Error: %f, Desired Heading: %f, Heading Count: %d", heading_ROS, heading_error, desired_heading, heading_count);
   // }
 
-  if (time_to_int <= 5 && int_flag == false){
-
-    ROS_INFO("WE MADE IT INTO IF");
-    
+  if (time_to_int <= 3 && int_flag == false){
     int_flag = true;
   }
 
+  // if(abs(veh_yaw) >= .75 && speed > 17){
+  //   throttle_pos.data = 0;
+  //   brake_force.data = 0;
+  //   steering_angle.data = 0;
+  //   // ROS_INFO("Saving car from oversteer");
+  // }
+
+  if (heading_count == 1){
+    if(int_actions[int_count] == 1){
+      desired_heading = heading_ROS + M_PI/2;
+    }
+    else if (int_actions[int_count] == 2){
+      desired_heading = heading_ROS - M_PI/2;
+    }
+    else if (int_actions[int_count] < 0){
+      desired_heading = heading_ROS;
+    }
+    ROS_INFO("Desired Heading has been calculated and is %f", desired_heading);
+  } 
+  heading_error = (desired_heading - heading_ROS);
+  if(heading_error <= -M_PI){
+    heading_error = 2 * M_PI - heading_error;
+  }
+  else if(heading_error > M_PI){
+    heading_error = -(2 * M_PI - heading_error);
+  }
+  
   if(int_flag == true){
     ROS_INFO("TURNING AT INTERSECTION {%d}", int_order[int_count]);
+    // LEFT OR RIGHT TURN
     if(int_actions[int_count] > 0 ){
-      if(time_to_int >1.5){
+      if(time_to_int < 3){
+        heading_count++;
+      }
+      if(dist > 7){
         ROS_INFO("SLOWING DOWN FOR TURN OR STOP");
-        audibot_params.linear.x = 10;
+        // set_speed = 10;
+        audibot_params.linear.x = 5;
         audibot_params.angular.z = 0;
         controller_pub.publish(audibot_params);
       }
       else{
+        if (abs(heading_error) < 0.5 && heading_error != 0){
+          ROS_INFO("WE MADE IT TO INTERSECTION");
+          int_flag = false;
+          heading_count = 0;
+          if(int_count<int_actions.size()){
+            int_count++;
+          }
+        }
+        else{
+            if(int_actions[int_count] == 1){
+                audibot_params.linear.x = 3;
+                audibot_params.angular.z = 5 * heading_error;
+                controller_pub.publish(audibot_params);
+            }
+              else if (int_actions[int_count] == 2){
+                audibot_params.linear.x = 3;
+                audibot_params.angular.z = 5 * heading_error;
+                controller_pub.publish(audibot_params);
+            }
+        }
+      }
+    }
+    // Going straight at the intersection
+    else if (int_actions[int_count] == 0){
         if (dist<8){
           ROS_INFO("WE MADE IT TO INTERSECTION");
           int_flag = false;
           if(int_count<int_actions.size()){
             int_count++;
           }
-          audibot_params.linear.x = 10;
-          audibot_params.angular.z = 0;
-          controller_pub.publish(audibot_params);
-        }
-        else{
-          ROS_INFO("WE ARE ON OUR WAY");
-          if(int_actions[int_count] > 0 ){
-            if(int_actions[int_count] == 1){
-                audibot_params.linear.x = 3;
-                audibot_params.angular.z = M_PI/3;
-                controller_pub.publish(audibot_params);
-            }
-              else if (int_actions[int_count] == 2){
-                audibot_params.linear.x = 0.2;
-                audibot_params.angular.z = -M_PI/3;
-                controller_pub.publish(audibot_params);
-            }
-          }
-          // else if(int_actions[int_count] == -1 ){
-          //     audibot_params.linear.x = 0;
-          //     audibot_params.angular.z = 0;
-          //     controller_pub.publish(audibot_params);
-          // }
         }
       }
-    }else if (int_actions[int_count] == 0){
-          if (dist<8){
-          ROS_INFO("WE MADE IT TO INTERSECTION");
-          int_flag = false;
-          if(int_count<int_actions.size()){
-            int_count++;
-          }
-          // audibot_params.linear.x = 10;
-          // audibot_params.angular.z = 0;
-          // controller_pub.publish(audibot_params);
-        }
-      }
+      // Stopping at intersection
       else if (int_actions[int_count] == -1){
-          if(dist<10){
+        if(dist<10){
           audibot_params.linear.x = 0;
           audibot_params.angular.z = 0;
-          controller_pub.publish(audibot_params);
-        }
+          controller_pub.publish(audibot_params);        }
       }
   }else{
     ROS_INFO("NEXT INTERSECTION {%d}", int_order[int_count]);
+    ROS_INFO("Setting heading count back to 0");
   }
 
-  // if (time_to_int <= 3 && int_flag == false){
-
-  //   ROS_INFO("WE MADE IT INTO IF");
-    
-  //   int_flag = true;
-    // if(int_actions[int_count] == 1){
-    //   desired_heading = heading_ROS + M_PI/2;
-    // }
-    // else if (int_actions[int_count] == 2){
-    //   desired_heading = heading_ROS + M_PI/2;
-    // }
-    
-    
-    // if(heading_error >= .5 && int_actions[int_count] > 0 ){
-    // if(int_actions[int_count] > 0 ){
-    //   if(int_actions[int_count] == 1){
-    //     while(cnt<500){
-    //       audibot_params.linear.x = 1;
-    //       audibot_params.angular.z = M_PI/2;
-    //       controller_pub.publish(audibot_params);
-    //       cnt++;
-    //     }
-    //   }
-    //   else if (int_actions[int_count] == 2){
-    //     while(cnt<300){
-    //       audibot_params.linear.x = 1;
-    //       audibot_params.angular.z = -M_PI/2;
-    //       controller_pub.publish(audibot_params);
-    //       cnt++;
-    //     }
-    //   }
-    // }
-    // else if(int_actions[int_count] == -1 ){
-    //   while(cnt<500){
-    //     audibot_params.linear.x = 0;
-    //     audibot_params.angular.z = 0;
-    //     controller_pub.publish(audibot_params);
-    //     cnt++;
-    //   }
-    // }
-// }
 }
 
 void recvHeading(const std_msgs::Float64ConstPtr& msg){
@@ -315,6 +300,8 @@ void recvHeading(const std_msgs::Float64ConstPtr& msg){
 int main(int argc, char** argv){
   ros::init(argc,argv,"final_project");
   ros::NodeHandle nh;
+  initGraph();
+  initIntersections();
   ros::Subscriber gps_sub = nh.subscribe("/audibot/gps/fix",1,recvFix); // Grab current gps position
   ros::Subscriber heading_sub = nh.subscribe("/audibot/gps/heading",1,recvHeading); // Grab current heading
   ros::Subscriber veh_spd_yaw_sub = nh.subscribe("audibot/twist",1,recvVehState); // Grab vehicle status
@@ -323,16 +310,19 @@ int main(int argc, char** argv){
   // throttle_pub = nh.advertise<std_msgs::Float64>("/audibot/throttle_cmd", 1); // Publishing throttle param
   // brake_pub = nh.advertise<std_msgs::Float64>("/audibot/brake_cmd", 1); // Publishing brake param
   // steering_pub = nh.advertise<std_msgs::Float64>("/audibot/steering_cmd", 1); // Publishing throttle param
-    controller_pub = nh.advertise<geometry_msgs::Twist>("/audibot/cmd_vel", 1); // Publishing audibot params
+  controller_pub = nh.advertise<geometry_msgs::Twist>("/audibot/cmd_vel", 1); // Publishing audibot params
 
   // Getting reference lat and lon
   nh.getParam("/audibot/gps/ref_lat",ref_lat);
   nh.getParam("/audibot/gps/ref_lon",ref_lon);
   
-  ref_point = UTMCoords(LatLon(ref_lat, ref_lon, 0.0));
-  initGraph();
-  initIntersections();
+  // nh.setParam("/audibot/path_following/speed", set_speed);
+  
+  
 
+
+  ref_point = UTMCoords(LatLon(ref_lat, ref_lon, 0.0));
+  
   // Getting UTM of the reference (starting) coordinates
   LatLon ref_coords_lat_lon(ref_lat, ref_lon, 0);
   ref_coords = UTMCoords(ref_coords_lat_lon);
