@@ -16,18 +16,9 @@ UTMCoords ref_point;
 UTMCoords ref_coords;
 tf::Vector3 ref_relative_position;
 nav_msgs::Path gps_path;
-ros::Publisher path_pub;
-ros::Publisher markers_pub;
-// ros::Publisher throttle_pub;
-// ros::Publisher brake_pub;
-// ros::Publisher steering_pub;
 ros::Publisher controller_pub;
 geometry_msgs::Twist audibot_params; // Twist message for the audibot parameters
 UTMCoords UTM_local_intersections[18];
-// ros::NodeHandle gh;
-double set_speed = 20;
-
-
 
 std::vector<int> int_actions;  // Legend: -1 = Stop, 0 = Straight, 1 = Left, 2 = Right
 std::vector<int> int_order;
@@ -59,9 +50,9 @@ UTMCoords waypoint_UTM[8];
 
 void initGraph(){
   int_actions.resize(6);
-  int_actions = {1, 0, 1, 2, 0, -1};
+  int_actions = {1, 0, 1, 0, 0, -1};
   int_order.resize(6);
-  int_order = {7, 8 , 14, 13, 15, 16};
+  int_order = {7, 8 , 14, 13, 12, 18};
 }
 
 void initIntersections(){
@@ -111,16 +102,14 @@ void recvFix(const sensor_msgs::NavSatFixConstPtr& msg){
   // Calculate convergence angle for ENU heading calc and convert to rads
   conv_angle = (atan(tan(veh_lon-central_meridian)*sin(veh_lat)))* (M_PI/180);
 
-  // for(int i = 0; i < 18; i++){
-
-  // double waypoint_x = UTM_local_intersections[i].getX();
-  // double waypoint_y = UTM_local_intersections[i].getY();
+  double waypoint_x = UTM_local_intersections[int_order[int_count]-1].getX();
+  double waypoint_y = UTM_local_intersections[int_order[int_count]-1].getY();
   // // Calculate heading offset between vehicle and waypoint
-  // waypoint_theta = atan2((waypoint_y - veh_y), (waypoint_x - veh_x)) - conv_angle; // Subtract convergence angle
-  // if(waypoint_theta <= 0){
-  //   waypoint_theta += 2*M_PI; // Keeps the waypoint angle between 0 and 2pi
-  // }
-  // ROS_INFO("INTERSECTION: {%d}", int_order[int_count]);
+  waypoint_theta = atan2((waypoint_y - veh_y), (waypoint_x - veh_x)) - conv_angle; // Subtract convergence angle
+  if(waypoint_theta <= 0){
+    waypoint_theta += 2*M_PI; // Keeps the waypoint angle between 0 and 2pi
+  }
+  ROS_INFO("Waypoint_theta: {%f}, waypoint_y: {%f}, waypoint_x: {%f}, veh_x: {%f}, veh_y: {%f}, conv_angle: {%f}", waypoint_theta - heading_ROS, waypoint_y, waypoint_x, veh_x, veh_y, conv_angle);
   // Vector between vehicle and waypoints
   waypoint_veh_pos = current_coords - UTM_local_intersections[int_order[int_count]-1];
 
@@ -128,13 +117,10 @@ void recvFix(const sensor_msgs::NavSatFixConstPtr& msg){
   dist = sqrt(pow(waypoint_veh_pos.getX(),2) + pow(waypoint_veh_pos.getY(),2));
   double time_to_int = dist/veh_spd;
   ROS_INFO("Vehicle speed: {%f}", veh_spd);
-  // if(dist<100){
-  // ROS_INFO("Veh Pos (%f, %f)", veh_x, veh_y);
   ROS_INFO("Distance to intersection %d: (%f)", int_order[int_count], dist);    
   ROS_INFO("Time to Intersection %f", time_to_int);
   ROS_INFO("FLAG: {%d}", int_flag);
   ROS_INFO("Current Heading: %f, Heading Error: %f, Desired Heading: %f, Heading Count: %d", heading_ROS, heading_error, desired_heading, heading_count);
-  // }
 
   if (time_to_int <= 3 && int_flag == false){
     int_flag = true;
@@ -157,7 +143,6 @@ void recvFix(const sensor_msgs::NavSatFixConstPtr& msg){
     else if (int_actions[int_count] < 0){
       desired_heading = heading_ROS;
     }
-    ROS_INFO("Desired Heading has been calculated and is %f", desired_heading);
   } 
   heading_error = (desired_heading - heading_ROS);
   if(heading_error <= -M_PI){
@@ -176,7 +161,6 @@ void recvFix(const sensor_msgs::NavSatFixConstPtr& msg){
       }
       if(int_actions[int_count] == 1){
         if(dist > 7){
-          ROS_INFO("SLOWING DOWN FOR TURN OR STOP");
           // set_speed = 10;
           audibot_params.linear.x = 5;
           audibot_params.angular.z = 0;
@@ -184,7 +168,6 @@ void recvFix(const sensor_msgs::NavSatFixConstPtr& msg){
         }
         else{
           if (abs(heading_error) < 0.5 && heading_error != 0){
-            ROS_INFO("WE MADE IT TO INTERSECTION");
             int_flag = false;
             heading_count = 0;
             if(int_count<int_actions.size()){
@@ -193,14 +176,13 @@ void recvFix(const sensor_msgs::NavSatFixConstPtr& msg){
           }
           else{
                   audibot_params.linear.x = 3;
-                  audibot_params.angular.z = 5 * heading_error;
+                  audibot_params.angular.z = 4.5 * heading_error;
                   controller_pub.publish(audibot_params);
               }
         }
       }
       else if (int_actions[int_count] == 2){
-        if(dist > 12){
-          ROS_INFO("SLOWING DOWN FOR TURN OR STOP");
+        if(dist > 11){
           // set_speed = 10;
           audibot_params.linear.x = 5;
           audibot_params.angular.z = 0;
@@ -208,7 +190,6 @@ void recvFix(const sensor_msgs::NavSatFixConstPtr& msg){
         }
         else{
           if (abs(heading_error) < 0.5 && heading_error != 0){
-            ROS_INFO("WE MADE IT TO INTERSECTION");
             int_flag = false;
             heading_count = 0;
             if(int_count<int_actions.size()){
@@ -226,7 +207,6 @@ void recvFix(const sensor_msgs::NavSatFixConstPtr& msg){
     // Going straight at the intersection
     else if (int_actions[int_count] == 0){
         if (dist<8){
-          ROS_INFO("WE MADE IT TO INTERSECTION");
           int_flag = false;
           if(int_count<int_actions.size()){
             int_count++;
@@ -235,19 +215,21 @@ void recvFix(const sensor_msgs::NavSatFixConstPtr& msg){
       }
       // Stopping at intersection
       else if (int_actions[int_count] == -1){
-        if(dist<30){
+        if(dist<40){
           audibot_params.linear.x = 0;
-          audibot_params.angular.z = 0;
+          audibot_params.angular.z = waypoint_theta - heading_ROS;
           controller_pub.publish(audibot_params);        
         }
-        else if(dist<8){
-          ROS_INFO("WE FREAKING MADE IT!!!!");
+        else if (dist<5){
+          ROS_INFO("WE MADE IT");
+          audibot_params.linear.x = 0;
+          audibot_params.angular.z = 0;
+          controller_pub.publish(audibot_params);    
         }
       }
       
   }else{
     ROS_INFO("NEXT INTERSECTION {%d}", int_order[int_count]);
-    ROS_INFO("Setting heading count back to 0");
   }
 
 }
@@ -263,63 +245,7 @@ void recvHeading(const std_msgs::Float64ConstPtr& msg){
   else{
     heading_ROS = heading_rad + (M_PI/2); // If GPS heading is anywhere else, just add pi/2
   }
-  // ROS_INFO("Current Heading %f", heading_ROS);
-
-
-  // Calculate heading error'
-
-  // heading_error = waypoint_theta - heading_ROS;
-
-  // Find time to the waypoint, used when determining when to brake, based on speed and distance from waypoint
-
-  // // Addressing issues at discontinuities
-  // if(heading_error > M_PI){
-  //   heading_error = -(2*M_PI - heading_error);
-  // }
-  // else if(heading_error < -M_PI){
-  //   heading_error = 2*M_PI + heading_error;
-  // }
 }
-//   // Setting thottle, brake, and steering parameters
-//   if(dist <= 1 && waypoint_index <= 8){
-//     waypoint_index += 1; // Move onto the next waypoint once one is reached until the final one
-//   }
-//   else if(time_to_waypoint>1 && veh_spd <= 40 && abs(heading_error) < 0.5){ // Speed up the vehicle if far from waypoint and error is small
-//     throttle_pos.data = 100;
-//     brake_force.data = 0;
-//   }
-//   else if(waypoint_index > 8){ // Once you reach the end, stop
-//     throttle_pos.data = 0;
-//     brake_force.data = 7500; 
-//   }
-//   else if(time_to_waypoint<=1 && veh_spd>20){ // Slow down for waypoint
-//     throttle_pos.data = 0;
-//     brake_force.data = 7500;
-//   }
-//   else{ // Don't brake or accelerate the car while its turning, tends to spin out
-//     throttle_pos.data = 0;
-//     brake_force.data = 0;
-//   }
-
-//   // Using proportional gain to set steering angle
-//   steering_angle.data = 5*heading_error;
-
-//   // All the damn prints...
-//   // ROS_INFO("Waypoint index: (%d)", waypoint_index);
-//   // ROS_INFO("Waypoint theta: (%f)", waypoint_theta);
-//   // ROS_INFO("Heading ROS: (%f)", heading_ROS);
-//   // ROS_INFO("Heading Error: (%f)", heading_error);
-//   // ROS_INFO("Waypoint distance: (%f)", dist);
-//   // ROS_INFO("Speed/Yaw: (%f,%f)", veh_spd, veh_yaw);
-//   // ROS_INFO("Throttle/Brake/Steering: (%f,%f,%f)", throttle_pos.data, brake_force.data, steering_angle.data);
-//   // ROS_INFO("Vehicle UTM: (%f, %f)", current_coords.getX(), current_coords.getY());
-//   // ROS_INFO("Waypoint UTM: (%f, %f)", waypoint_UTM[waypoint_index].getX(), waypoint_UTM[waypoint_index].getY());
-//   // ROS_INFO("Relative Position: (%f, %f)", relative_position.x(), relative_position.y());
-
-//   throttle_pub.publish(throttle_pos);
-//   brake_pub.publish(brake_force);
-//   steering_pub.publish(steering_angle);
-// }
 
 int main(int argc, char** argv){
   ros::init(argc,argv,"final_project");
@@ -331,19 +257,11 @@ int main(int argc, char** argv){
   ros::Subscriber veh_spd_yaw_sub = nh.subscribe("audibot/twist",1,recvVehState); // Grab vehicle status
 
   // Vehicle parameter publisher
-  // throttle_pub = nh.advertise<std_msgs::Float64>("/audibot/throttle_cmd", 1); // Publishing throttle param
-  // brake_pub = nh.advertise<std_msgs::Float64>("/audibot/brake_cmd", 1); // Publishing brake param
-  // steering_pub = nh.advertise<std_msgs::Float64>("/audibot/steering_cmd", 1); // Publishing throttle param
   controller_pub = nh.advertise<geometry_msgs::Twist>("/audibot/cmd_vel", 1); // Publishing audibot params
 
   // Getting reference lat and lon
   nh.getParam("/audibot/gps/ref_lat",ref_lat);
   nh.getParam("/audibot/gps/ref_lon",ref_lon);
-  
-  // nh.setParam("/audibot/path_following/speed", set_speed);
-  
-  
-
 
   ref_point = UTMCoords(LatLon(ref_lat, ref_lon, 0.0));
   
