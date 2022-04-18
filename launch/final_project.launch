@@ -1,0 +1,31 @@
+<?xml version="1.0" ?>
+
+<launch>
+
+  <include file="$(find ugv_course_launch)/launch/audibot_road_world.launch" />
+
+  <include file="$(find audibot_lane_detection)/launch/lane_detection.launch" >
+    <arg name="nodelet" value="true" />
+  </include>
+
+  <group ns="audibot" >
+    <node pkg="audibot_path_following" type="audibot_path_following" name="path_following" output="screen" />
+    <node pkg="audibot_twist_controller" type="audibot_twist_node" name="twist_control" output="screen" />
+  </group>
+
+  <node pkg="rviz" type="rviz" name="lane_keep_viz" args="-d $(find audibot_lane_detection)/rviz/lane_detection.rviz" />
+
+</launch>
+
+
+<!-- <launch> -->
+  <!-- Leave this here -->
+  <!-- <include file="$(find audibot_path_following)/launch/road_world_path_following.launch" /> -->
+  <!-- <node pkg="audibot_path_following" type="audibot_path_following" name="path_following" /> -->
+  <!-- <node pkg="rviz" type="rviz" name="sim_project_rviz" respawn="true" args="-d $(find gps_sim_project)/rviz/sim_project.rviz" /> -->
+
+  <!-- Launch your part of the system here! -->
+  <!-- <node ns="audibot" pkg="audibot_twist_controller" type="audibot_twist_node" name="audibot_twist_node" /> -->
+  <!-- <node pkg="gps_sim_project" type="gps" name="gps_sim_project" output="screen"/> -->
+
+<!-- </launch> -->
