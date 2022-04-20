@@ -10,6 +10,7 @@
 #include <dynamic_reconfigure/DoubleParameter.h>
 #include <dynamic_reconfigure/Reconfigure.h>
 #include <dynamic_reconfigure/Config.h>
+#include <bits/stdc++.h>
 
 UTMCoords ref_point;
 
@@ -27,9 +28,7 @@ UTMCoords UTM_local_intersections[18];
 // ros::NodeHandle gh;
 double set_speed = 20;
 
-
-
-std::vector<int> int_actions;  // Legend: -1 = Stop, 0 = Straight, 1 = Left, 2 = Right
+std::vector<int> int_actions;  // Legend: -2 = U-turn, -1 = Stop, 0 = Straight, 1 = Left, 2 = Right
 std::vector<int> int_order;
 int int_count = 0;
 
@@ -52,40 +51,146 @@ bool int_flag = false;
 int heading_count = 0;
 
 double heading_error;
-
+  
+// size of dist and action matrix
+const int S = 18;
+// adjacency distance matrix
+const int dist_matrix[S][S] = {
+  {0, 65, 775, 567, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+  {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+  {0, 0, 0, 0, 375, 0, 0, 65, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+  {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+  {0, 0, 0, 0, 0, 167, 196, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+  {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+  {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+  {0, 0, 0, 0, 0, 0, 0, 0, 115, 0, 0, 0, 115, 0, 0, 0, 0, 0},
+  {0, 0, 0, 0, 0, 0, 0, 0, 0, 65, 0, 0, 0, 0, 0, 0, 0, 0},
+  {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 115, 0, 0, 0, 538, 0, 0, 0},
+  {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 299},
+  {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+  {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 65, 0, 65, 0, 0, 0, 0},
+  {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+  {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 88, 65, 0},
+  {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+  {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+  {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
+};
 
 // List of UTM converted waypoint coordinates
 UTMCoords waypoint_UTM[8];
 
+int minDistance(int dist[], bool sptSet[])
+{
+    // Initialize min value
+    int min = INT_MAX, min_index;
+    for (int i = 0; i < S; i++)
+        if (sptSet[i] == false && dist[i] <= min)
+            min = dist[i], min_index = i;
+    return min_index;
+}
+
+void printPath(int parent[], int j)
+{
+    // Base Case : If j is source
+    if (parent[j] == -1)
+        return;
+    printPath(parent, parent[j]);
+    printf("%d ", j);
+}
+ 
+// A utility function to print the constructed distance
+// array
+int printSolution(int dist[], int n, int parent[])
+{
+    int src = 0;
+    printf("Vertex\t\t Distance\tPath");
+    for (int i = 1; i < S; i++) {
+      if (i<10){
+        printf("\n%d -> %d \t\t %d\t\t%d ", src, i, dist[i], src);
+      }
+      else{
+        printf("\n%d -> %d \t %d\t\t%d ", src, i, dist[i], src);
+      }
+        printPath(parent, i);
+    }
+}
+
+void dijkstra(const int graph[S][S], int src)
+{
+    // The output array. dist[i] will hold the shortest
+    // distance from src to i
+    int dist[S];
+ 
+    // sptSet[i] will true if vertex i is included / in
+    // shortest path tree or shortest distance from src to i
+    // is finalized
+    bool sptSet[S] = { false };
+ 
+    // Parent array to store shortest path tree
+    int parent[S] = { -1 };
+ 
+    // Initialize all distances as INFINITE
+    for (int i = 0; i < S; i++)
+        dist[i] = INT_MAX;
+ 
+    // Distance of source vertex from itself is always 0
+    dist[src] = 0;
+ 
+    // Find shortest path for all vertices
+    for (int count = 0; count < S - 1; count++) {
+        // Pick the minimum distance vertex from the set of
+        // vertices not yet processed. u is always equal to
+        // src in first iteration.
+        int u = minDistance(dist, sptSet);
+        // Mark the picked vertex as processed
+        sptSet[u] = true;
+        // Update dist value of the adjacent vertices of the
+        // picked vertex.
+        for (int v = 0; v < S; v++)
+            // Update dist[v] only if is not in sptSet,
+            // there is an edge from u to v, and total
+            // weight of path from src to v through u is
+            // smaller than current value of dist[v]
+            if (!sptSet[v] && graph[u][v]
+                && dist[u] + graph[u][v] < dist[v]) {
+                parent[v] = u;
+                dist[v] = dist[u] + graph[u][v];
+            }
+    }
+    // print the constructed distance array
+    printSolution(dist, S, parent);
+}
+
 void initGraph(){
-  int_actions.resize(6);
-  int_actions = {1, 0, 1, 2, 0, -1};
-  int_order.resize(6);
-  int_order = {7, 8 , 14, 13, 15, 16};
+  dijkstra(dist_matrix, 0);
+  int_actions.resize(7);
+  int_actions = {0, 1, 0, 1, 2, 0, -1};
+  int_order.resize(7);
+  int_order = {0, 2, 7 , 8, 9, 14, 15};
 }
 
 void initIntersections(){
   // List of GPS waypoint coordinates
   const double intersections[18][2] = {
-    {42.0024367640, -83.0026815700},
-    {42.0024491386, -83.0018985140},
-    {42.0052849918,	-82.9982609600},
-    {42.0025810159,	-82.9944807940},
-    {42.0016393444,	-82.9931539150},
-    {42.0011509630,	-82.9951296391},
-    {41.9997857060,	-82.9956885461},
-    {42.0003776418,	-82.9957040005},
-    {42.0003525220,	-82.9970950120},
-    {42.0009389400,	-82.9971147990},
-    {42.0003403860,	-82.9978830675},
-    {42.0013712950,	-82.9979085647},
-    {42.0013999875,	-82.9965243760},
-    {42.0014086810,	-82.9957412321},
-    {42.0032462520,	-82.9976927114},
-    {42.0027408455,	-82.9969826401},
-    {42.0026591745,	-82.9976741668},
-    {42.0026749210,	-83.0005488420},
-    };
+  {42.0024491386,	-83.0018985140},
+  {42.0024367640,	-83.0026815700},
+  {41.9997857060,	-82.9956885461},
+  {42.0052849918,	-82.9982609600},
+  {42.0025810159,	-82.9944807940},
+  {42.0016393444,	-82.9931539150},
+  {42.0011509630,	-82.9951296391},
+  {42.0003776418,	-82.9957040005},
+  {42.0014086810,	-82.9957412321},
+  {42.0013999875,	-82.9965243760},
+  {42.0013712950,	-82.9979085647},
+  {42.0003403860,	-82.9978830675},
+  {42.0003525220,	-82.9970950120},
+  {42.0009389400,	-82.9971147990},
+  {42.0032462520,	-82.9976927114},
+  {42.0027408455,	-82.9969826401},
+  {42.0026591745,	-82.9976741668},
+  {42.0026749210,	-83.0005488420}
+  };
   for (int i = 0; i < 18; i++) {
     UTMCoords waypoint(LatLon(intersections[i][0], intersections[i][1], 0.0));
     UTM_local_intersections[i] = waypoint;
@@ -104,6 +209,8 @@ void recvFix(const sensor_msgs::NavSatFixConstPtr& msg){
   double veh_lon = msg->longitude;
   double veh_x = current_coords.getX();
   double veh_y = current_coords.getY();
+  double time_delta = 0.02;
+  double dist_traveled = 0;
   // int traveled_int = 1; // If the intersection has already been traversed, don't count it again
   
   tf::Vector3 waypoint_veh_pos;
@@ -122,7 +229,10 @@ void recvFix(const sensor_msgs::NavSatFixConstPtr& msg){
   // }
   // ROS_INFO("INTERSECTION: {%d}", int_order[int_count]);
   // Vector between vehicle and waypoints
-  waypoint_veh_pos = current_coords - UTM_local_intersections[int_order[int_count]-1];
+  waypoint_veh_pos = current_coords - UTM_local_intersections[int_order[int_count]];
+
+  dist_traveled = dist_traveled + (veh_spd*time_delta);
+  ROS_INFO("Veh Speed, Distance Traveled: (%f, %f)", veh_spd, dist_traveled);
 
   // Finding direct distance between vehicle and waypoint
   dist = sqrt(pow(waypoint_veh_pos.getX(),2) + pow(waypoint_veh_pos.getY(),2));
@@ -342,9 +452,6 @@ int main(int argc, char** argv){
   
   // nh.setParam("/audibot/path_following/speed", set_speed);
   
-  
-
-
   ref_point = UTMCoords(LatLon(ref_lat, ref_lon, 0.0));
   
   // Getting UTM of the reference (starting) coordinates
