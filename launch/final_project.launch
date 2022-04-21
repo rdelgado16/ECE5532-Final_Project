@@ -10,12 +10,15 @@
 
   <group ns="audibot" >
     <node pkg="audibot_path_following" type="audibot_path_following" name="path_following" output="screen" />
-    <node pkg="audibot_twist_controller" type="audibot_twist_node" name="twist_control" output="screen" />
   </group>
 
   <!-- <node pkg="final_project" type="final_project" name="project_main" output="screen"/> -->
-  <node pkg="rviz" type="rviz" name="lane_keep_viz" args="-d $(find audibot_lane_detection)/rviz/lane_detection.rviz" />
+  <node pkg="audibot_twist_controller" type="audibot_twist_node" name="twist_control" output="screen" />
 
+  <node pkg="rviz" type="rviz" name="lane_keep_viz" args="-d $(find audibot_lane_detection)/rviz/lane_detection.rviz" />
+    <!-- <remap from="/roadsteer_cmd" to="/audibot/cmd_vel" /> -->
+  <!-- </node> -->
+ 
 </launch>
 
 

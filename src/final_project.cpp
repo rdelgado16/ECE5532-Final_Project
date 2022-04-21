@@ -11,6 +11,12 @@
 #include <dynamic_reconfigure/Reconfigure.h>
 #include <dynamic_reconfigure/Config.h>
 
+const double RATIO = 17.3;
+const double LENGHT = 2.65;
+
+ros::Publisher steering_pub;
+ros::Publisher speed_pub;
+
 UTMCoords ref_point;
 
 UTMCoords ref_coords;
@@ -19,6 +25,9 @@ nav_msgs::Path gps_path;
 ros::Publisher controller_pub;
 geometry_msgs::Twist audibot_params; // Twist message for the audibot parameters
 UTMCoords UTM_local_intersections[18];
+
+std_msgs::Float64 path_steer;
+std_msgs::Float64 path_speed;
 
 std::vector<int> int_actions;  // Legend: -1 = Stop, 0 = Straight, 1 = Left, 2 = Right
 std::vector<int> int_order;
@@ -89,6 +98,16 @@ void recvVehState(const geometry_msgs::TwistStampedConstPtr& msg){
   veh_yaw = msg->twist.angular.z;
 }
 
+void recvPathFollowing(const geometry_msgs::TwistConstPtr& msg){
+  double v = msg->linear.x;
+  double psi_dot = msg->angular.z;
+
+  // path_speed.linear.x = v;
+  // path_speed.angular.z = psi_dot;
+  path_speed.data = 0.1;
+  path_steer.data = RATIO*atan(LENGHT*psi_dot/v);
+}
+
 void recvFix(const sensor_msgs::NavSatFixConstPtr& msg){
   UTMCoords current_coords(*msg);
   double veh_lat = msg->latitude;
@@ -96,7 +115,7 @@ void recvFix(const sensor_msgs::NavSatFixConstPtr& msg){
   double veh_x = current_coords.getX();
   double veh_y = current_coords.getY();
   // int traveled_int = 1; // If the intersection has already been traversed, don't count it again
-  
+
   tf::Vector3 waypoint_veh_pos;
 
   // Calculate convergence angle for ENU heading calc and convert to rads
@@ -122,7 +141,7 @@ void recvFix(const sensor_msgs::NavSatFixConstPtr& msg){
   ROS_INFO("FLAG: {%d}", int_flag);
   ROS_INFO("Current Heading: %f, Heading Error: %f, Desired Heading: %f, Heading Count: %d", heading_ROS, heading_error, desired_heading, heading_count);
 
-  if (time_to_int <= 3 && int_flag == false){
+  if (time_to_int <= 3 && time_to_int > 0 && int_flag == false){
     int_flag = true;
   }
 
@@ -206,11 +225,20 @@ void recvFix(const sensor_msgs::NavSatFixConstPtr& msg){
     }
     // Going straight at the intersection
     else if (int_actions[int_count] == 0){
-        if (dist<8){
-          int_flag = false;
-          if(int_count<int_actions.size()){
-            int_count++;
-          }
+         if (veh_spd<20){
+      path_speed.data = 1;
+    }  
+    else{
+      path_speed.data = 0;
+    }
+    speed_pub.publish(path_speed);  
+    steering_pub.publish(path_steer);
+   
+      if (dist<8){
+        int_flag = false;
+        if(int_count<int_actions.size()){
+          int_count++;
+        }
         }
       }
       // Stopping at intersection
@@ -230,8 +258,21 @@ void recvFix(const sensor_msgs::NavSatFixConstPtr& msg){
       
   }else{
     ROS_INFO("NEXT INTERSECTION {%d}", int_order[int_count]);
+    double max_spd;
+    if(path_steer.data < 0.5){
+      max_spd = 25;
+    }else{
+      max_spd = 20;
+    }
+    if (veh_spd<max_spd){
+      path_speed.data = 1;
+    }  
+    else{
+      path_speed.data = 0;
+    }
+    speed_pub.publish(path_speed);  
+    steering_pub.publish(path_steer);
   }
-
 }
 
 void recvHeading(const std_msgs::Float64ConstPtr& msg){
@@ -256,6 +297,11 @@ int main(int argc, char** argv){
   ros::Subscriber heading_sub = nh.subscribe("/audibot/gps/heading",1,recvHeading); // Grab current heading
   ros::Subscriber veh_spd_yaw_sub = nh.subscribe("audibot/twist",1,recvVehState); // Grab vehicle status
 
+  ros::Subscriber path_following = nh.subscribe("audibot/cmd_vel", 1, recvPathFollowing);
+
+  speed_pub = nh.advertise<std_msgs::Float64>("audibot/throttle_cmd", 1);
+  steering_pub = nh.advertise<std_msgs::Float64>("audibot/steering_cmd", 1);
+
   // Vehicle parameter publisher
   controller_pub = nh.advertise<geometry_msgs::Twist>("/audibot/cmd_vel", 1); // Publishing audibot params
 
@@ -271,6 +317,6 @@ int main(int argc, char** argv){
 
   // Finding central meridian, since robot won't be moving long distances, central meridian won't change
   central_meridian = ref_coords.getCentralMeridian();
-  
+
   ros::spin();
 }
