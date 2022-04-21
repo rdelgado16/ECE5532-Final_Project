@@ -78,9 +78,6 @@ const int dist_matrix[S][S] = {
   {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
 };
 
-// Destination intersection number
-int dest = 0;
-
 // Matrix for actions to perform at an intersection
 const int actions_matrix[S][S] = {
   {0, 2, 0, -2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
@@ -256,7 +253,7 @@ void recvFix(const sensor_msgs::NavSatFixConstPtr& msg){
   waypoint_veh_pos = current_coords - UTM_local_intersections[int_order[int_count]];
 
   dist_traveled = dist_traveled + (veh_spd*time_delta);
-  ROS_INFO("Veh Speed, Distance Traveled: (%f, %f)", veh_spd, dist_traveled);
+  ROS_INFO("Distance Traveled: (%f)", dist_traveled);
 
   // Finding direct distance between vehicle and waypoint
   dist = sqrt(pow(waypoint_veh_pos.getX(),2) + pow(waypoint_veh_pos.getY(),2));
@@ -458,7 +455,13 @@ void recvHeading(const std_msgs::Float64ConstPtr& msg){
 int main(int argc, char** argv){
   ros::init(argc,argv,"final_project");
   ros::NodeHandle nh;
-  ros::param::param <int> ("~dest", dest, 0);
+
+  // Destination intersection number
+  int dest;
+
+  nh.param("destination", dest, 0);
+  
+  // ros::param::param <int> ("~dest", dest, 0);
   // dest = argc;
   initGraph(dest);
   // initGraph();
