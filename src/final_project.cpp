@@ -51,6 +51,8 @@ bool int_flag = false;
 int heading_count = 0;
 
 double heading_error;
+
+double dist_traveled = 0; // Distance traveled by robot
   
 // size of dist and action matrix
 const int S = 18;
@@ -76,9 +78,35 @@ const int dist_matrix[S][S] = {
   {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
 };
 
+// Destination intersection number
+int dest = 0;
+
+// Matrix for actions to perform at an intersection
+const int actions_matrix[S][S] = {
+  {0, 2, 0, -2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+  {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+  {0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+  {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+  {0, 0, 0, 0, 0, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+  {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+  {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+  {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0},
+  {0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0},
+  {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0},
+  {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+  {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+  {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0},
+  {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+  {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0},
+  {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+  {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+  {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
+};
+
 // List of UTM converted waypoint coordinates
 UTMCoords waypoint_UTM[8];
 
+// A utility function to find the vertex with minimum distance value, from the set of vertices not yet included in shortest path tree
 int minDistance(int dist[], bool sptSet[])
 {
     // Initialize min value
@@ -89,45 +117,27 @@ int minDistance(int dist[], bool sptSet[])
     return min_index;
 }
 
+// Function to print shortest path from source to j using parent array
 void printPath(int parent[], int j)
 {
     // Base Case : If j is source
     if (parent[j] == -1)
         return;
     printPath(parent, parent[j]);
-    printf("%d ", j);
-}
- 
-// A utility function to print the constructed distance
-// array
-int printSolution(int dist[], int n, int parent[])
-{
-    int src = 0;
-    printf("Vertex\t\t Distance\tPath");
-    for (int i = 1; i < S; i++) {
-      if (i<10){
-        printf("\n%d -> %d \t\t %d\t\t%d ", src, i, dist[i], src);
-      }
-      else{
-        printf("\n%d -> %d \t %d\t\t%d ", src, i, dist[i], src);
-      }
-        printPath(parent, i);
-    }
+    // printf("%d ", j);
+    int_order.insert(int_order.end(), j); // Appending intersection number to int_order
 }
 
-void dijkstra(const int graph[S][S], int src)
+void dijkstra(const int graph[S][S], int src, int dest)
 {
-    // The output array. dist[i] will hold the shortest
-    // distance from src to i
+    // The output array. dist[i] will hold the shortest distance from src to i
     int dist[S];
  
-    // sptSet[i] will true if vertex i is included / in
-    // shortest path tree or shortest distance from src to i
-    // is finalized
+    // sptSet[i] will true if vertex i is included / in shortest path tree or shortest distance from src to i is finalized
     bool sptSet[S] = { false };
  
     // Parent array to store shortest path tree
-    int parent[S] = { -1 };
+    int parent[S] = {-1};
  
     // Initialize all distances as INFINITE
     for (int i = 0; i < S; i++)
@@ -138,35 +148,50 @@ void dijkstra(const int graph[S][S], int src)
  
     // Find shortest path for all vertices
     for (int count = 0; count < S - 1; count++) {
-        // Pick the minimum distance vertex from the set of
-        // vertices not yet processed. u is always equal to
-        // src in first iteration.
+        // Pick the minimum distance vertex from the set of vertices not yet processed. u is always equal to src in first iteration.
         int u = minDistance(dist, sptSet);
         // Mark the picked vertex as processed
         sptSet[u] = true;
-        // Update dist value of the adjacent vertices of the
-        // picked vertex.
+        // Update dist value of the adjacent vertices of the picked vertex.
         for (int v = 0; v < S; v++)
-            // Update dist[v] only if is not in sptSet,
-            // there is an edge from u to v, and total
-            // weight of path from src to v through u is
-            // smaller than current value of dist[v]
+            // Update dist[v] only if is not in sptSet, there is an edge from u to v, and total weight of path from src to v through u is smaller than current value of dist[v]
             if (!sptSet[v] && graph[u][v]
                 && dist[u] + graph[u][v] < dist[v]) {
                 parent[v] = u;
                 dist[v] = dist[u] + graph[u][v];
             }
-    }
+    } 
     // print the constructed distance array
-    printSolution(dist, S, parent);
+    printPath(parent, dest);
+   
 }
 
-void initGraph(){
-  dijkstra(dist_matrix, 0);
-  int_actions.resize(7);
-  int_actions = {0, 1, 0, 1, 2, 0, -1};
-  int_order.resize(7);
-  int_order = {0, 2, 7 , 8, 9, 14, 15};
+void initGraph(int dest){
+  if(dest>17 || dest<0){dest=0;} // If the dest value is not within 0 and 17, set it to default of 0
+
+  int_order.insert(int_order.begin(), 0); // Adding starting intersection to int_order list
+  dijkstra(dist_matrix, 0, dest); // Calling dijkstra's algorithm to find optimal path to destination
+
+  printf("\nDestination: %d", dest);
+
+  printf("\nIntersection Numbers: ");
+  for(int i = 0; i < int_order.size(); i++){
+    printf("%d ", int_order[i]);
+  }
+  int_actions.resize(int_order.size());
+  printf("\nIntersection Actions: ");
+
+  // Creating list of actions to perform at each intersection based on actions matrix
+  for(int j = 0; j < int_order.size(); j++){
+    if(j < int_order.size()-1){
+      int_actions[j] = actions_matrix[int_order[j]][int_order[j+1]];
+    }
+    else{
+      int_actions[j] = -1; // At the final intersection, stop the vehicle
+    }
+    printf("%d ", int_actions[j]);
+  }
+  printf("\n");
 }
 
 void initIntersections(){
@@ -210,7 +235,6 @@ void recvFix(const sensor_msgs::NavSatFixConstPtr& msg){
   double veh_x = current_coords.getX();
   double veh_y = current_coords.getY();
   double time_delta = 0.02;
-  double dist_traveled = 0;
   // int traveled_int = 1; // If the intersection has already been traversed, don't count it again
   
   tf::Vector3 waypoint_veh_pos;
@@ -434,11 +458,15 @@ void recvHeading(const std_msgs::Float64ConstPtr& msg){
 int main(int argc, char** argv){
   ros::init(argc,argv,"final_project");
   ros::NodeHandle nh;
-  initGraph();
+  ros::param::param <int> ("~dest", dest, 0);
+  // dest = argc;
+  initGraph(dest);
+  // initGraph();
   initIntersections();
   ros::Subscriber gps_sub = nh.subscribe("/audibot/gps/fix",1,recvFix); // Grab current gps position
   ros::Subscriber heading_sub = nh.subscribe("/audibot/gps/heading",1,recvHeading); // Grab current heading
   ros::Subscriber veh_spd_yaw_sub = nh.subscribe("audibot/twist",1,recvVehState); // Grab vehicle status
+
 
   // Vehicle parameter publisher
   // throttle_pub = nh.advertise<std_msgs::Float64>("/audibot/throttle_cmd", 1); // Publishing throttle param
