@@ -15,10 +15,13 @@
 const double RATIO = 17.3;
 const double LENGHT = 2.65;
 
+ros::Publisher throttle_pub;
 ros::Publisher steering_pub;
-ros::Publisher speed_pub;
+ros::Publisher brake_pub;
 
 UTMCoords ref_point;
+double max_spd;
+
 
 UTMCoords ref_coords;
 tf::Vector3 ref_relative_position;
@@ -28,7 +31,8 @@ geometry_msgs::Twist audibot_params; // Twist message for the audibot parameters
 UTMCoords UTM_local_intersections[18];
 
 std_msgs::Float64 path_steer;
-std_msgs::Float64 path_speed;
+std_msgs::Float64 path_throttle;
+std_msgs::Float64 path_brake;
 
 std::vector<int> int_actions;  // Legend: -2 = U-turn, -1 = Stop, 0 = Straight, 1 = Left, 2 = Right
 std::vector<int> int_order;
@@ -196,24 +200,24 @@ void initGraph(int dest){
 void initIntersections(){
   // List of GPS waypoint coordinates
   const double intersections[18][2] = {
-  {42.0024491386,	-83.0018985140},
-  {42.0024367640,	-83.0026815700},
-  {41.9997857060,	-82.9956885461},
-  {42.0052849918,	-82.9982609600},
-  {42.0025810159,	-82.9944807940},
-  {42.0016393444,	-82.9931539150},
-  {42.0011509630,	-82.9951296391},
-  {42.0003776418,	-82.9957040005},
+  {42.0024368827,	-83.0018966597},
+  {42.0024233329,	-83.0026809157},
+  {41.9997778317,	-82.9956899874},
+  {42.0052664730,	-82.9982770987},
+  {42.0025648237,	-82.9944826903},
+  {42.0016205635,	-82.9931575650},
+  {42.0011337181,	-82.9951319794},
+  {42.0003601305,	-82.9957096338},
   {42.0014086810,	-82.9957412321},
-  {42.0013999875,	-82.9965243760},
-  {42.0013712950,	-82.9979085647},
-  {42.0003403860,	-82.9978830675},
-  {42.0003525220,	-82.9970950120},
-  {42.0009389400,	-82.9971147990},
-  {42.0032462520,	-82.9976927114},
+  {42.0013971743,	-82.9957405948},
+  {42.0013587175,	-82.9979154257},
+  {42.0003242825,	-82.9978791442},
+  {42.0003388582,	-82.9970925462},
+  {42.0009235385,	-82.9971122165},
+  {42.0032374802,	-82.9976925887},
   {42.0027408455,	-82.9969826401},
-  {42.0026591745,	-82.9976741668},
-  {42.0026749210,	-83.0005488420}
+  {42.0027240285,	-82.9969869078},
+  {42.0026600108,	-83.0005444171}
   };
   for (int i = 0; i < 18; i++) {
     UTMCoords waypoint(LatLon(intersections[i][0], intersections[i][1], 0.0));
@@ -231,9 +235,9 @@ void recvPathFollowing(const geometry_msgs::TwistConstPtr& msg){
   double v = msg->linear.x;
   double psi_dot = msg->angular.z;
 
-  // path_speed.linear.x = v;
-  // path_speed.angular.z = psi_dot;
-  path_speed.data = 0.1;
+  // path_throttle.linear.x = v;
+  // path_throttle.angular.z = psi_dot;
+  path_throttle.data = 0.1;
   path_steer.data = RATIO*atan(LENGHT*psi_dot/v);
 }
 
@@ -258,12 +262,12 @@ void recvFix(const sensor_msgs::NavSatFixConstPtr& msg){
   if(waypoint_theta <= 0){
     waypoint_theta += 2*M_PI; // Keeps the waypoint angle between 0 and 2pi
   }
-  ROS_INFO("Waypoint_theta: {%f}, waypoint_y: {%f}, waypoint_x: {%f}, veh_x: {%f}, veh_y: {%f}, conv_angle: {%f}", waypoint_theta - heading_ROS, waypoint_y, waypoint_x, veh_x, veh_y, conv_angle);
+  // ROS_INFO("Waypoint_theta: {%f}, waypoint_y: {%f}, waypoint_x: {%f}, veh_x: {%f}, veh_y: {%f}, conv_angle: {%f}", waypoint_theta - heading_ROS, waypoint_y, waypoint_x, veh_x, veh_y, conv_angle);
   // Vector between vehicle and waypoints
   waypoint_veh_pos = current_coords - UTM_local_intersections[int_order[int_count]];
 
   dist_traveled = dist_traveled + (veh_spd*time_delta);
-  ROS_INFO("Distance Traveled: (%f)", dist_traveled);
+  // ROS_INFO("Distance Traveled: (%f)", dist_traveled);
 
   // Finding direct distance between vehicle and waypoint
   dist = sqrt(pow(waypoint_veh_pos.getX(),2) + pow(waypoint_veh_pos.getY(),2));
@@ -273,16 +277,19 @@ void recvFix(const sensor_msgs::NavSatFixConstPtr& msg){
   ROS_INFO("Time to Intersection %f", time_to_int);
   ROS_INFO("FLAG: {%d}", int_flag);
   ROS_INFO("Current Heading: %f, Heading Error: %f, Desired Heading: %f, Heading Count: %d", heading_ROS, heading_error, desired_heading, heading_count);
-
-  if (time_to_int <= 3 && time_to_int > 0 && int_flag == false){
+  ROS_INFO("Current Accell : %f, Current Brake: %f, Current Steering: %f", path_throttle.data, path_brake.data, path_steer.data);
+  if (time_to_int <= 2 && time_to_int > 0 && int_flag == false){
     int_flag = true;
   }
 
-  if(abs(veh_yaw) >= .5 && veh_spd > 2){
-    audibot_params.linear.x = audibot_params.linear.x;
-    audibot_params.angular.z = 0;
-    controller_pub.publish(audibot_params);
-   ROS_INFO("Saving car from oversteer");
+  if(abs(veh_yaw) >= .3 && veh_spd > 5){
+  //   path_throttle.data = 0;
+  //   path_brake.data = 0;
+  //   // path_steer.data = 0;
+  // //   audibot_params.linear.x = audibot_params.linear.x;
+  // //   audibot_params.angular.z = 0;
+  // //   controller_pub.publish(audibot_params);
+  //   ROS_INFO("Saving car from oversteer");
   }
 
   if (heading_count == 1){
@@ -305,107 +312,115 @@ void recvFix(const sensor_msgs::NavSatFixConstPtr& msg){
   }
   
   if(int_flag == true){
-    ROS_INFO("TURNING AT INTERSECTION {%d}", int_order[int_count]);
+    ROS_INFO("NEXT INTERSECTION IS {%d} AND WE ARE {%d}", int_order[int_count], int_actions[int_count]);
+    
     // LEFT OR RIGHT TURN
     if(int_actions[int_count] > 0 ){
-      if(time_to_int < 3){
+      if(dist < 20){
         heading_count++;
       }
+      
       if(int_actions[int_count] == 1){
-        if(dist > 7){
-          // set_speed = 10;
-          audibot_params.linear.x = 5;
-          audibot_params.angular.z = 0;
-          controller_pub.publish(audibot_params);
-        }
-        else{
-          if (abs(heading_error) < 0.5 && heading_error != 0){
+        if (abs(heading_error) < 0.3 && heading_error != 0 && dist < 19 && heading_count>0){
             int_flag = false;
             heading_count = 0;
             if(int_count<int_actions.size()){
               int_count++;
             }
-          }
-          else{
-                  audibot_params.linear.x = 3;
-                  audibot_params.angular.z = 4.5 * heading_error;
-                  controller_pub.publish(audibot_params);
-              }
+        }
+        if(dist > 6){
+          path_brake.data = 5000;
+          path_throttle.data = 0;
+        }
+        else{
+          path_brake.data = 0;
+          path_steer.data = 8 * heading_error;
         }
       }
       else if (int_actions[int_count] == 2){
-        if(dist > 11){
-          // set_speed = 10;
-          audibot_params.linear.x = 5;
-          audibot_params.angular.z = 0;
-          controller_pub.publish(audibot_params);
+        if (abs(heading_error) < 0.3 && heading_error != 0 && dist < 19 && heading_count>0){
+          int_flag = false;
+          heading_count = 0;
+          if(int_count<int_actions.size()){
+            int_count++;
+          }
+        }
+        if(dist > 6){
+          path_brake.data = 5000;
+          path_throttle.data = 0;
         }
         else{
-          if (abs(heading_error) < 0.5 && heading_error != 0){
-            int_flag = false;
-            heading_count = 0;
-            if(int_count<int_actions.size()){
-              int_count++;
-            }
-          }
-          else{
-                  audibot_params.linear.x = 3;
-                  audibot_params.angular.z = 5 * heading_error;
-                  controller_pub.publish(audibot_params);
-              }
+            path_brake.data = 0;
+            path_steer.data = 12 * heading_error;
         }
       }
     }
     // Going straight at the intersection
     else if (int_actions[int_count] == 0){
-         if (veh_spd<20){
-      path_speed.data = 1;
-    }  
-    else{
-      path_speed.data = 0;
-    }
-    speed_pub.publish(path_speed);  
-    steering_pub.publish(path_steer);
-   
-      if (dist<8){
+      max_spd = 25;
+      if (path_steer.data > .3){
+        max_spd = 15;
+      }
+      if (veh_spd<max_spd){
+        // double err = (max_spd - veh_spd) / max_spd;
+        path_throttle.data = .5;
+        path_brake.data = 0;
+      }  
+      else{
+        path_throttle.data = 0;
+        path_brake.data = 1000;
+      }
+      if(dist<5){
         int_flag = false;
+        heading_count = 0;
         if(int_count<int_actions.size()){
           int_count++;
         }
-        }
       }
-      // Stopping at intersection
-      else if (int_actions[int_count] == -1){
-        if(dist<40){
-          audibot_params.linear.x = 0;
-          audibot_params.angular.z = waypoint_theta - heading_ROS;
-          controller_pub.publish(audibot_params);        
-        }
-        else if (dist<5){
-          ROS_INFO("WE MADE IT");
-          audibot_params.linear.x = 0;
-          audibot_params.angular.z = 0;
-          controller_pub.publish(audibot_params);    
-        }
+    }
+    // Stopping at intersection
+    else if (int_actions[int_count] == -1){
+      if(dist<10){
+        path_brake.data = 10000/dist;
+        path_steer.data = waypoint_theta - heading_ROS;
+        path_throttle.data = 0; 
+        ROS_INFO("Vehicle STOPPING AT INTERSECTION");    
       }
-      
+    else if (int_actions[int_count] == -2){
+      path_steer.data = waypoint_theta - heading_ROS;
+      path_throttle.data = 0.05;
+      ROS_INFO("U TURN");
+    }
+    
+    } 
+
+    if(veh_spd < 3 && int_actions[int_count] != -1){
+        path_throttle.data = 0.5;
+        path_brake.data = 0;
+        ROS_INFO("Vehicle too slow speeding up");
+    }
+
+
+
   }else{
-    ROS_INFO("NEXT INTERSECTION {%d}", int_order[int_count]);
-    double max_spd;
-    if(path_steer.data < 0.5){
-      max_spd = 25;
-    }else{
-      max_spd = 20;
+    // ROS_INFO("NEXT INTERSECTION {%d}", int_order[int_count]);
+    max_spd = 25;
+    if (path_steer.data > .2){
+      max_spd = 15;
     }
     if (veh_spd<max_spd){
-      path_speed.data = 1;
+      // double err = (max_spd - veh_spd) / max_spd;
+      path_throttle.data = .5;
+      path_brake.data = 0;
     }  
     else{
-      path_speed.data = 0;
+      path_throttle.data = 0;
+      path_brake.data = 1000;
     }
-    speed_pub.publish(path_speed);  
-    steering_pub.publish(path_steer);
   }
+  throttle_pub.publish(path_throttle);  
+  steering_pub.publish(path_steer);
+  brake_pub.publish(path_brake);
 }
 
 void recvHeading(const std_msgs::Float64ConstPtr& msg){
@@ -430,10 +445,7 @@ int main(int argc, char** argv){
 
   nh.param("destination", dest, 0);
   
-  // ros::param::param <int> ("~dest", dest, 0);
-  // dest = argc;
   initGraph(dest);
-  // initGraph();
   initIntersections();
   ros::Subscriber gps_sub = nh.subscribe("/audibot/gps/fix",1,recvFix); // Grab current gps position
   ros::Subscriber heading_sub = nh.subscribe("/audibot/gps/heading",1,recvHeading); // Grab current heading
@@ -441,11 +453,9 @@ int main(int argc, char** argv){
 
   ros::Subscriber path_following = nh.subscribe("audibot/cmd_vel", 1, recvPathFollowing);
 
-  speed_pub = nh.advertise<std_msgs::Float64>("audibot/throttle_cmd", 1);
+  throttle_pub = nh.advertise<std_msgs::Float64>("audibot/throttle_cmd", 1);
   steering_pub = nh.advertise<std_msgs::Float64>("audibot/steering_cmd", 1);
-
-  // Vehicle parameter publisher
-  controller_pub = nh.advertise<geometry_msgs::Twist>("/audibot/cmd_vel", 1); // Publishing audibot params
+  brake_pub = nh.advertise<std_msgs::Float64>("audibot/brake_cmd", 1);
 
   // Getting reference lat and lon
   nh.getParam("/audibot/gps/ref_lat",ref_lat);
