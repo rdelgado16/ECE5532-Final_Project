@@ -12,10 +12,11 @@
 #include <dynamic_reconfigure/Config.h>
 #include <bits/stdc++.h>
 
-// audibot kinematics parameters
+// audibot kinematics parameters based on ackermann
 const double RATIO = 17.3;
 const double LENGHT = 2.65;
 
+// publishers
 ros::Publisher throttle_pub;
 ros::Publisher steering_pub;
 ros::Publisher brake_pub;
@@ -27,9 +28,10 @@ UTMCoords ref_coords;
 tf::Vector3 ref_relative_position;
 nav_msgs::Path gps_path;
 ros::Publisher controller_pub;
-geometry_msgs::Twist audibot_params; // Twist message for the audibot parameters
-UTMCoords UTM_local_intersections[18];
+geometry_msgs::Twist audibot_params; // Twist message for the audibot parameters yaw and speed
+UTMCoords UTM_local_intersections[18]; 
 
+// variables to control
 std_msgs::Float64 path_steer;
 std_msgs::Float64 path_throttle;
 std_msgs::Float64 path_brake;
@@ -53,10 +55,10 @@ double central_meridian; // Central meridian of the robots reference position
 
 double heading_ROS;
 double desired_heading = 0; // Heading of the vehicle but in ROS format (due East)
-bool int_flag = false;
-int heading_count = 0;
+bool int_flag = false; // used to determine if we are close to intersection
+int heading_count = 0; // used to calculate desired heading once
 
-double heading_error;
+double heading_error; // delta between correct heading and vehicle heading
 
 double dist_traveled = 0; // Distance traveled by robot
   
@@ -234,17 +236,9 @@ void recvVehState(const geometry_msgs::TwistStampedConstPtr& msg){
 void recvPathFollowing(const geometry_msgs::TwistConstPtr& msg){
   double v = msg->linear.x;
   double psi_dot = msg->angular.z;
-
-  // path_throttle.linear.x = v;
-  // path_throttle.angular.z = psi_dot;
-  // path_throttle.data = 0.1;
-  // if(veh_spd < 7){
-  //   path_steer.data = 2 * RATIO*atan(LENGHT*psi_dot/v);
-  // }
-  // else{
-    path_steer.data = RATIO*atan(LENGHT*psi_dot/v);
+  path_steer.data = RATIO*atan(LENGHT*psi_dot/v); //Ackermann steering while path following
   }
-// }
+
 
 void recvFix(const sensor_msgs::NavSatFixConstPtr& msg){
   UTMCoords current_coords(*msg);
@@ -253,7 +247,6 @@ void recvFix(const sensor_msgs::NavSatFixConstPtr& msg){
   double veh_x = current_coords.getX();
   double veh_y = current_coords.getY();
   double time_delta = 0.02;
-  // int traveled_int = 1; // If the intersection has already been traversed, don't count it again
   ROS_INFO("lat {%f} lon {%f}", veh_lat, veh_lon);
   tf::Vector3 waypoint_veh_pos;
 
@@ -270,169 +263,165 @@ void recvFix(const sensor_msgs::NavSatFixConstPtr& msg){
   // Vector between vehicle and waypoints
   waypoint_veh_pos = current_coords - UTM_local_intersections[int_order[int_count]];
 
+  //used for the algorithem to settle weight
   dist_traveled = dist_traveled + (veh_spd*time_delta);
-  // ROS_INFO("Distance Traveled: (%f)", dist_traveled);
 
   // Finding direct distance between vehicle and waypoint
   dist = sqrt(pow(waypoint_veh_pos.getX(),2) + pow(waypoint_veh_pos.getY(),2));
-  double time_to_int = dist/veh_spd;\
+  double time_to_int = dist/veh_spd;
+
+  //All the prints
   ROS_INFO("NEXT INTERSECTION IS {%d} AND WE ARE {%d}", int_order[int_count], int_actions[int_count]);
   ROS_INFO("Vehicle speed: {%f}", veh_spd);
   ROS_INFO("Distance to intersection %d: (%f)", int_order[int_count], dist);    
   ROS_INFO("Time to Intersection %f", time_to_int);
   ROS_INFO("FLAG: {%d}", int_flag);
-  ROS_INFO("Current Heading: %f, Heading Error: %f, Desired Heading: %f, Heading Count: %d, Waypoint Theta: %f", heading_ROS, heading_error, 
-  desired_heading, heading_count, waypoint_theta);
-  // ROS_INFO("Current Accell : %f, Current Brake: %f, Current Steering: %f", path_throttle.data, path_brake.data, path_steer.data);
+  ROS_INFO("Current Accell : %f, Current Brake: %f, Current Steering: %f", path_throttle.data, path_brake.data, path_steer.data);
+  ROS_INFO("NEXT INTERSECTION IS {%d} AND WE ARE {%d}", int_order[int_count], int_actions[int_count]);
+
+  // used to calculate desired heading
   if (heading_count == 1){
     if(int_actions[int_count] == 1){
-      desired_heading = heading_ROS + M_PI/2;
+      desired_heading = heading_ROS + M_PI/2; // desired heading for left
     }
     else if (int_actions[int_count] == 2){
-      desired_heading = heading_ROS - M_PI/2;
+      desired_heading = heading_ROS - M_PI/2; // desired heading for right
     }
     else if (int_actions[int_count] == -2){
-      desired_heading = heading_ROS + M_PI;
+      desired_heading = heading_ROS + M_PI; // desired heading for U Turn
     }
     else{
-      desired_heading = heading_ROS;
+      desired_heading = heading_ROS; // heading for going straight or stopping
     }
   } 
+  // calculate heading error used to steer the vehicle the correct amount
   heading_error = (desired_heading - heading_ROS);
+  // addressing discontinuities
   if(heading_error <= -M_PI){
     heading_error = 2 * M_PI - heading_error;
   }
   else if(heading_error > M_PI){
     heading_error = -(2 * M_PI - heading_error);
   }
+
+  // setting the int_flag if we are 2 seconds to the intersection
   if (time_to_int <= 2 && time_to_int > 0 && int_flag == false){
     int_flag = true;
   }
+  // when we get close to the intersection
   if(int_flag == true){
-    // ROS_INFO("NEXT INTERSECTION IS {%d} AND WE ARE {%d}", int_order[int_count], int_actions[int_count]);
-  
     
-    if(int_actions[int_count] > 0){
-      if(dist < 26){
-        heading_count++;
-      }
-      // LEFT TURN
-      if(int_actions[int_count] == 1){
-        if (abs(heading_error) < 0.2 && heading_error != 0 && dist < 25 && heading_count>1){
-            int_flag = false;
-            heading_count = 0;
-            if(int_count<int_actions.size()){
-              int_count++;
-            }
-        }
-        if(dist > 8){
-        path_brake.data = 10000/dist + 3000;
-        // path_steer.data = waypoint_theta - heading_ROS;
-        path_throttle.data = 0; 
-        // ROS_INFO("Slowing down Vehicle");  
-        }
-        else{
-          path_brake.data = 0;
-          path_steer.data = 7 * heading_error;
-          // ROS_INFO("Turning Left");
-          }
-        
-      }
-      // RIGHT TURN
-      else if (int_actions[int_count] == 2){
-        if(int_order[int_count + 1] == 1){
-          if (heading_error > 0.2 && heading_error < 1 && heading_error != 0 && heading_count>1){
-            int_flag = false;
-            heading_count = 0;
-            if(int_count<int_actions.size()){
-              int_count++;
-            }
-          }
-          else{
-            path_throttle.data = 0.2;
-            path_brake.data = 0;
-            path_steer.data = -100;
-            // ROS_INFO("SHARP RIGHT TURN FOR 1");
-          }
-        }else{   
-          if (abs(heading_error) < 0.4 && heading_error != 0 && dist < 25 && heading_count>1){
-            int_flag = false;
-            heading_count = 0;
-            if(int_count<int_actions.size()){
-              int_count++;
-            }
-          }
-          if(dist > 8){
-          path_brake.data = 10000/dist + 3000;
-          // path_steer.data = waypoint_theta - heading_ROS;
-          path_throttle.data = 0; 
-          // ROS_INFO("Slowing down Vehicle");  
-        }
-          else{
-            path_brake.data = 0;
-            path_steer.data = 12 * heading_error;
-            // ROS_INFO("RIGHT TURN");
-          }
-        }
-      }
-      
+    if (time_to_int <= 2 && time_to_int > 0 && int_flag == false){
+      int_flag = true;
     }
+      if(int_flag == true){
+        // No stop or U Turn
+        if(int_actions[int_count] > 0){
+          if(dist < 26){
+            heading_count++;
+          }
+
+          // LEFT TURN
+          if(int_actions[int_count] == 1){
+            if (abs(heading_error) < 0.2 && heading_error != 0 && dist < 25 && heading_count>1){
+                int_flag = false;
+                heading_count = 0;
+                if(int_count<int_actions.size()){
+                  int_count++;
+                }
+            }
+            if(dist > 8){
+            path_brake.data = 10000/dist + 3000;
+            path_throttle.data = 0; 
+            }
+            else{
+              path_brake.data = 0;
+              path_steer.data = 7 * heading_error;
+            }
+          }
+
+          // RIGHT TURN
+          else if (int_actions[int_count] == 2){
+            if(int_order[int_count + 1] == 1){
+              if (heading_error > 0.2 && heading_error < 1 && heading_error != 0 && heading_count>1){
+                int_flag = false;
+                heading_count = 0;
+                if(int_count<int_actions.size()){
+                  int_count++;
+                }
+              }
+              else{
+                path_throttle.data = 0.05;
+                path_brake.data = 0;
+                path_steer.data = -100;
+              }
+            }
+            else{   
+              if (abs(heading_error) < 0.4 && heading_error != 0 && dist < 25 && heading_count>1){
+                int_flag = false;
+                heading_count = 0;
+                if(int_count<int_actions.size()){
+                  int_count++;
+                }
+              }
+              if(dist > 8){
+              path_brake.data = 10000/dist + 3000;
+              path_throttle.data = 0;
+            }
+              else{
+                path_brake.data = 0;
+                path_steer.data = 12 * heading_error;
+              }
+            }
+          }
+        }
+
     // Going straight at the intersection
-    else if (int_actions[int_count] == 0){
-      max_spd = 20;
-      if (path_steer.data > .1){
-        max_spd = 15;
-      }
-      if (veh_spd<max_spd){
-        // double err = (max_spd - veh_spd) / max_spd;
-        path_throttle.data = .5;
-        path_brake.data = 0;
-      }  
-      else{
-        path_throttle.data = 0;
-        path_brake.data = 1000;
-      }
-      if(dist<10){
-        int_flag = false;
-        heading_count = 0;
-        if(int_count<int_actions.size()){
-          int_count++;
+      else if (int_actions[int_count] == 0){
+        max_spd = 20;
+        if (path_steer.data > .1){
+          max_spd = 15;
+        }
+        if (veh_spd<max_spd){
+          path_throttle.data = .5;
+          path_brake.data = 0;
+        }  
+        else{
+          path_throttle.data = 0;
+          path_brake.data = 1000;
+        }
+        if(dist<10){
+          int_flag = false;
+          heading_count = 0;
+          if(int_count<int_actions.size()){
+            int_count++;
+          }
         }
       }
-    }
+
     // Stopping at intersection
     else if (int_actions[int_count] == -1){
       if(dist<7){
         path_brake.data = 10000;
-        // path_steer.data = waypoint_theta - heading_ROS;
-        path_throttle.data = 0; 
-        ROS_INFO("Vehicle STOPPING AT INTERSECTION");    
+        path_throttle.data = 0;   
       }
       else if(dist < 150 && veh_spd > 5){
         path_brake.data = 10000/dist + 3000;
-        // if(abs(heading_error) > 0.7){
-        //   path_steer.data = waypoint_theta - heading_ROS;
-        // }
-        path_throttle.data = 0; 
-        ROS_INFO("Slowing down Vehicle");  
+        path_throttle.data = 0;  
       }
       else {
         path_brake.data = 0;
-        //         if(abs(heading_error) > 0.7){
-
-        // path_steer.data = waypoint_theta - heading_ROS;
-        //         }
         path_throttle.data = .5;
       }
-    
-    
     } 
 
+    // Making sure vehicle doesnt stop or slow down too much before end intersection
     if(veh_spd < 7 && int_actions[int_count] != -1){
         path_throttle.data = .2;
         path_brake.data = 0;
-        ROS_INFO("Vehicle too slow speeding up");
     }
+
+    // U TURN
     if (int_actions[int_count] == -2){
       if (heading_error < -1.75 && heading_error > -2.25 && heading_error != 0){
         int_flag = false;
@@ -445,18 +434,17 @@ void recvFix(const sensor_msgs::NavSatFixConstPtr& msg){
         path_throttle.data = 0.2;
         path_brake.data = 0;
         path_steer.data = 100;
-        ROS_INFO("U TURN");
         }
       }
   }
+
   else{
-    // ROS_INFO("NEXT INTERSECTION {%d}", int_order[int_count]);
     max_spd = 20;
+    //Traction Control
     if (path_steer.data > .3){
       max_spd = 20 * (1.3 - path_steer.data);
     }
     if (veh_spd<max_spd){
-      // double err = (max_spd - veh_spd) / max_spd;
       path_throttle.data = .5;
       path_brake.data = 0;
     }  
@@ -467,14 +455,13 @@ void recvFix(const sensor_msgs::NavSatFixConstPtr& msg){
     if(veh_spd < 10 && int_actions[int_count] != -1){
         path_throttle.data = .2;
         path_brake.data = 0;
-        ROS_INFO("Vehicle too slow speeding up");
     }
   }
   throttle_pub.publish(path_throttle);  
   steering_pub.publish(path_steer);
   brake_pub.publish(path_brake);
+  }
 }
-
 
 void recvHeading(const std_msgs::Float64ConstPtr& msg){
   std_msgs::Float64 robot_heading; // Audibot's current heading
